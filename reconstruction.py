@@ -3,7 +3,8 @@
 1. Blended point-to-plane distances (method from class):
 
        Phi(x) = sum_i phi(|x - p_i|) n_i^T (x - p_i) / sum_i phi(|x - p_i|)
-       phi(r) = 1 / (r^2 + epsilon^2)
+       phi(r) = 1 / (r^2 + epsilon^2) in the handout; the main method here uses
+       phi(r) = 1 / (r^6 + epsilon^6) (see the note above HANDOUT_WEIGHT_POWER)
 
 2. Generalized winding number of a point cloud (Barill et al., SIGGRAPH 2018):
 
@@ -150,27 +151,29 @@ class PointCloudImplicit:
         raise NotImplementedError
 
 
-# Exponent of the point-to-plane weight phi(r) = 1 / (r^2 + eps^2)^power.
-# power = 1 is the weight given in the handout. Summed over ALL samples of a
-# surface it is not local enough: sum_i phi_i behaves like the integral of
-# 1/r^2 over a 2D surface, which diverges logarithmically, so distant samples
-# dominate the blend. Their plane distances average to about -3V/A < 0 for a
-# closed surface, so Phi ends up negative on BOTH sides of the surface and
-# marching cubes finds nothing (see exp1_weight_locality.py).
-# power = 2 decays like 1/r^4, the weight integral converges, nearby samples
-# dominate, and Phi becomes a proper signed distance near the surface.
-# The other common fix, keeping power = 1 but summing only over the k nearest
-# samples, is available through num_neighbors (exp4 reports it for reference).
-# Neither makes Phi reliable FAR from the samples: see exp4 / fig3 (camel, kid).
+# Point-to-plane weights. The handout's phi(r) = 1 / (r^2 + eps^2), summed over
+# ALL samples of a surface, is not local enough: sum_i phi_i behaves like the
+# integral of 1/r^2 over a 2D surface, which diverges logarithmically, so
+# distant samples dominate the blend. Their plane distances average to about
+# -3V/A < 0 for a closed surface, so Phi ends up negative on BOTH sides of the
+# surface and marching cubes finds nothing (see exp1_weight_locality.py).
+# Weights that fall off faster fix this. The main method uses
+# phi(r) = 1 / (r^6 + eps^6) (SixthPowerPointToPlaneImplicit): nearby samples
+# dominate strongly, Phi follows the signed distance closely near the surface,
+# and far fewer spurious surfaces appear away from it than with slower weights.
+# PointToPlaneImplicit covers phi(r) = 1 / (r^2 + eps^2)^power: power = 1 is the
+# handout weight, power = 2 the squared weight, and num_neighbors restricts the
+# sum to the k nearest samples (reference variants in exp4).
 HANDOUT_WEIGHT_POWER = 1
-LOCAL_WEIGHT_POWER = 2
+SQUARED_WEIGHT_POWER = 2
 NEAREST_NEIGHBOR_BLEND = 16
 
-# eps for point-to-plane, as a multiple of the mean sample spacing h. exp2
-# sweeps eps / h: the distance between the point-to-plane and winding-number
-# surfaces is flat below ~0.25h and grows after that (sphere, cube, bunny,
-# noisy bunny; camel and kid are dominated by spurious surfaces), so we use:
-MATCHED_EPSILON_RATIO = 0.1
+# eps for the main point-to-plane weight, as a multiple of the mean sample
+# spacing h. exp2 sweeps eps / h: the distance to the winding-number surface
+# is flat up to 0.5h and grows after that, so we use the largest flat value:
+MATCHED_EPSILON_RATIO = 0.5
+# eps for the squared-weight reference variant (flat below ~0.25h in its sweep)
+SQUARED_WEIGHT_EPSILON_RATIO = 0.1
 # delta for the (optional) regularized winding-number kernel, also times h
 REGULARIZATION_RATIO = 0.5
 
@@ -182,7 +185,7 @@ class PointToPlaneImplicit(PointCloudImplicit):
     The sum runs over all samples, or over the num_neighbors nearest
     samples of x when num_neighbors is given."""
 
-    def __init__(self, point_cloud, epsilon, weight_power=LOCAL_WEIGHT_POWER, num_neighbors=None):
+    def __init__(self, point_cloud, epsilon, weight_power=SQUARED_WEIGHT_POWER, num_neighbors=None):
         super().__init__(point_cloud)
         self.epsilon = float(epsilon)
         self.weight_power = weight_power
@@ -208,6 +211,23 @@ class PointToPlaneImplicit(PointCloudImplicit):
         signed_plane_distances = np.einsum('qkj,qkj->qk', offsets, self.sample_normals[neighbor_indices])
         weights = 1.0 / (neighbor_distances ** 2 + self.epsilon ** 2) ** self.weight_power
         return np.sum(weights * signed_plane_distances, axis=1) / np.sum(weights, axis=1)
+
+
+class SixthPowerPointToPlaneImplicit(PointToPlaneImplicit):
+    """Point-to-plane blend with phi(r) = 1 / (r^6 + eps^6), summed over all
+    samples: the main point-to-plane method. The weight is nearly flat below
+    r = eps and falls off like 1/r^6 beyond it."""
+
+    def __init__(self, point_cloud, epsilon):
+        super().__init__(point_cloud, epsilon)
+
+    def evaluate_chunk(self, query_points):
+        squared_distances, signed_plane_distances = self.pairwise_terms(query_points)
+        weights = squared_distances * squared_distances
+        weights *= squared_distances  # r^6
+        weights += self.epsilon ** 6
+        np.reciprocal(weights, out=weights)
+        return np.einsum('qi,qi->q', weights, signed_plane_distances) / np.sum(weights, axis=1)
 
 
 class GaussianPointToPlaneImplicit(PointToPlaneImplicit):

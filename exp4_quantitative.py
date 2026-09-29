@@ -13,12 +13,13 @@ both computed on the marching-cubes output:
   reconstruction -> truth  distance from each reconstructed vertex to the true mesh
                            (this is the one that exposes spurious surfaces)
 
-Methods on clean samples: winding number (handout formula), point-to-plane
-with the squared weight and matched eps, and for reference the handout weight
-over all samples, the handout weight over the 16 nearest samples, the
-exponential weight exp(-r^2 / eps^2) with eps = h, and the regularized
-winding number (extension). Noisy samples (noise on the
-reconstruction samples only): the two main methods.
+Methods on clean samples: winding number (handout formula) and point-to-plane
+with phi(r) = 1 / (r^6 + eps^6) at the matched eps, and for reference the
+handout weight over all samples, the handout weight over the 16 nearest
+samples, the squared weight 1 / (r^2 + eps^2)^2, the exponential weight
+exp(-r^2 / eps^2) with eps = h, and the regularized winding number
+(extension). Noisy samples (noise on the reconstruction samples only): the two
+main methods.
 
 Outputs: results/tables/quantitative.csv and results/tables/quantitative.md
 """
@@ -27,37 +28,39 @@ import csv
 
 import numpy as np
 
-from reconstruction import (HANDOUT_WEIGHT_POWER, LOCAL_WEIGHT_POWER, MATCHED_EPSILON_RATIO, MESH_NAMES,  # noqa: E402
+from reconstruction import (HANDOUT_WEIGHT_POWER, MATCHED_EPSILON_RATIO, MESH_NAMES,  # noqa: E402
                             NEAREST_NEIGHBOR_BLEND, NOISE_SEED, NUM_RECON_POINTS, RECON_SEED,
-                            REGULARIZATION_RATIO, TEST_POINTS_MULTIPLIER, TEST_SEED, WINDING_NEIGHBORS,
-                            GaussianPointToPlaneImplicit, PointToPlaneImplicit, WindingNumberImplicit,
-                            add_position_noise, load_normalized_mesh,
-                            mesh_is_empty, output_path, point_to_mesh_distances, reconstruct_mesh,
-                            sample_point_cloud)
+                            REGULARIZATION_RATIO, SQUARED_WEIGHT_EPSILON_RATIO, SQUARED_WEIGHT_POWER,
+                            TEST_POINTS_MULTIPLIER, TEST_SEED, WINDING_NEIGHBORS, GaussianPointToPlaneImplicit,
+                            PointToPlaneImplicit, SixthPowerPointToPlaneImplicit, WindingNumberImplicit,
+                            add_position_noise, load_normalized_mesh, mesh_is_empty, output_path,
+                            point_to_mesh_distances, reconstruct_mesh, sample_point_cloud)
 
 NOISE_SIGMA = 0.02
 MAIN_METHODS = ['winding number', 'point-to-plane']
 REFERENCE_METHODS = ['point-to-plane, handout weight', f'point-to-plane, handout weight, {NEAREST_NEIGHBOR_BLEND} nearest',
-                     'point-to-plane, exponential weight', 'winding number, regularized']
+                     'point-to-plane, squared weight', 'point-to-plane, exponential weight', 'winding number, regularized']
 
 
 def build_methods(cloud, include_reference):
     winding = WindingNumberImplicit(cloud, WINDING_NEIGHBORS)
     spacing = winding.mean_neighbor_distances.mean()
-    epsilon = MATCHED_EPSILON_RATIO * spacing
     methods = [
         ('winding number', winding, f'k = {WINDING_NEIGHBORS}'),
-        ('point-to-plane', PointToPlaneImplicit(cloud, epsilon, LOCAL_WEIGHT_POWER),
-         f'eps = {MATCHED_EPSILON_RATIO:g}h, squared weight'),
+        ('point-to-plane', SixthPowerPointToPlaneImplicit(cloud, MATCHED_EPSILON_RATIO * spacing),
+         f'eps = {MATCHED_EPSILON_RATIO:g}h, phi = 1/(r^6 + eps^6)'),
     ]
     if include_reference:
+        reference_epsilon = SQUARED_WEIGHT_EPSILON_RATIO * spacing
         methods += [
-            (REFERENCE_METHODS[0], PointToPlaneImplicit(cloud, epsilon, HANDOUT_WEIGHT_POWER),
-             f'eps = {MATCHED_EPSILON_RATIO:g}h, all samples'),
-            (REFERENCE_METHODS[1], PointToPlaneImplicit(cloud, epsilon, HANDOUT_WEIGHT_POWER, NEAREST_NEIGHBOR_BLEND),
-             f'eps = {MATCHED_EPSILON_RATIO:g}h'),
-            (REFERENCE_METHODS[2], GaussianPointToPlaneImplicit(cloud, spacing), 'eps = 1h, phi = exp(-r^2/eps^2)'),
-            (REFERENCE_METHODS[3], WindingNumberImplicit(cloud, WINDING_NEIGHBORS, REGULARIZATION_RATIO * spacing),
+            (REFERENCE_METHODS[0], PointToPlaneImplicit(cloud, reference_epsilon, HANDOUT_WEIGHT_POWER),
+             f'eps = {SQUARED_WEIGHT_EPSILON_RATIO:g}h, all samples'),
+            (REFERENCE_METHODS[1], PointToPlaneImplicit(cloud, reference_epsilon, HANDOUT_WEIGHT_POWER, NEAREST_NEIGHBOR_BLEND),
+             f'eps = {SQUARED_WEIGHT_EPSILON_RATIO:g}h'),
+            (REFERENCE_METHODS[2], PointToPlaneImplicit(cloud, reference_epsilon, SQUARED_WEIGHT_POWER),
+             f'eps = {SQUARED_WEIGHT_EPSILON_RATIO:g}h, phi = 1/(r^2 + eps^2)^2'),
+            (REFERENCE_METHODS[3], GaussianPointToPlaneImplicit(cloud, spacing), 'eps = 1h, phi = exp(-r^2/eps^2)'),
+            (REFERENCE_METHODS[4], WindingNumberImplicit(cloud, WINDING_NEIGHBORS, REGULARIZATION_RATIO * spacing),
              f'delta = {REGULARIZATION_RATIO:g}h'),
         ]
     return spacing, methods
@@ -124,8 +127,8 @@ def write_markdown(rows):
     sections = [
         f'# Quantitative results\n\n{NUM_RECON_POINTS} reconstruction samples and {num_test} independent test '
         f'points per mesh; meshes normalized to [-1, 1]; marching cubes on a 64^3 grid over [-1.5, 1.5]^3.\n'
-        f'Point-to-plane: eps = {MATCHED_EPSILON_RATIO:g} h (h = mean kNN spacing of the samples), squared weight. '
-        f'Winding number: k = {WINDING_NEIGHBORS}.',
+        f'Point-to-plane: phi(r) = 1/(r^6 + eps^6) with eps = {MATCHED_EPSILON_RATIO:g} h (h = mean kNN spacing of '
+        f'the samples). Winding number: k = {WINDING_NEIGHBORS}.',
         '## 1. Error |Phi(x)| at the test points, clean samples (required comparison)\n\n'
         'Units differ: point-to-plane Phi is a length, 0.5 - w is a fraction of the full solid angle.\n\n'
         + table(0.0, MAIN_METHODS, phi_columns, phi_headers),

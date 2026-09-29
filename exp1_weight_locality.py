@@ -5,7 +5,8 @@
 
 (b) Point-to-plane weight: with the handout's phi(r) = 1 / (r^2 + eps^2),
     Phi stays negative on both sides of the surface, so marching cubes finds
-    no surface. Squaring the weight fixes it. Plots Phi along a line that
+    no surface. Faster-decaying weights fix it (squared, and 1 / (r^6 + eps^6)).
+    Plots Phi along a line that
     crosses the surface, and reports the sign of Phi over the whole grid.
 
 Outputs: results/figures/fig1_weight_locality.png, results/tables/area_weight_check.csv
@@ -19,10 +20,11 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 
-from reconstruction import (HANDOUT_WEIGHT_POWER, LOCAL_WEIGHT_POWER, MESH_NAMES, NUM_RECON_POINTS,  # noqa: E402
-                            RECON_SEED, TEST_SEED, WINDING_NEIGHBORS, PointToPlaneImplicit,
-                            WindingNumberImplicit, evaluate_on_grid, knn_area_weights, load_normalized_mesh,
-                            mesh_is_empty, output_path, reconstruct_mesh, sample_point_cloud)
+from reconstruction import (HANDOUT_WEIGHT_POWER, MATCHED_EPSILON_RATIO, MESH_NAMES, NUM_RECON_POINTS,  # noqa: E402
+                            RECON_SEED, SQUARED_WEIGHT_POWER, TEST_SEED, WINDING_NEIGHBORS, PointToPlaneImplicit,
+                            SixthPowerPointToPlaneImplicit, WindingNumberImplicit, evaluate_on_grid,
+                            knn_area_weights, load_normalized_mesh, mesh_is_empty, output_path, reconstruct_mesh,
+                            sample_point_cloud)
 
 PROFILE_MESH = 'bunny'
 NEIGHBOR_COUNTS = [1, 2, 4, 6, 8, 12]
@@ -59,8 +61,9 @@ def profile_across_surface():
     variants = [
         ('point-to-plane, handout weight, eps = 0.1h', PointToPlaneImplicit(cloud, 0.1 * spacing, HANDOUT_WEIGHT_POWER), 'tab:blue', '--'),
         ('point-to-plane, handout weight, eps = 1h', PointToPlaneImplicit(cloud, 1.0 * spacing, HANDOUT_WEIGHT_POWER), 'tab:blue', ':'),
-        ('point-to-plane, squared weight, eps = 0.1h', PointToPlaneImplicit(cloud, 0.1 * spacing, LOCAL_WEIGHT_POWER), 'tab:green', '-'),
-        ('point-to-plane, squared weight, eps = 1h', PointToPlaneImplicit(cloud, 1.0 * spacing, LOCAL_WEIGHT_POWER), 'tab:green', '-.'),
+        ('point-to-plane, squared weight, eps = 0.1h', PointToPlaneImplicit(cloud, 0.1 * spacing, SQUARED_WEIGHT_POWER), 'tab:green', '-.'),
+        (f'point-to-plane, 1/(r^6 + eps^6), eps = {MATCHED_EPSILON_RATIO:g}h',
+         SixthPowerPointToPlaneImplicit(cloud, MATCHED_EPSILON_RATIO * spacing), 'tab:purple', '-'),
         ('winding number, 0.5 - w', winding, 'tab:orange', '-'),
     ]
 

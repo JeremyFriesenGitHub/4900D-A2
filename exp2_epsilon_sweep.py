@@ -1,6 +1,6 @@
 """Experiment 2: choose eps so point-to-plane approximates the winding number.
 
-eps is swept as a multiple of the mean sample spacing h (the same kNN
+eps of the main weight 1 / (r^6 + eps^6) is swept as a multiple of the mean sample spacing h (the same kNN
 spacing the winding number uses for A_i), so the chosen value transfers
 across meshes and sampling densities. For every eps we reconstruct both
 surfaces and measure how far apart they are:
@@ -22,7 +22,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 
 from reconstruction import (MESH_NAMES, NOISE_SEED, NUM_RECON_POINTS, RECON_SEED, WINDING_NEIGHBORS,  # noqa: E402
-                            PointToPlaneImplicit, WindingNumberImplicit, add_position_noise,
+                            SixthPowerPointToPlaneImplicit, WindingNumberImplicit, add_position_noise,
                             load_normalized_mesh, output_path, reconstruct_mesh, sample_point_cloud,
                             symmetric_mean_distance)
 
@@ -42,7 +42,7 @@ def sweep_case(mesh_name, noise_sigma):
 
     rows = []
     for ratio in EPSILON_RATIOS:
-        plane_mesh, plane_grid = reconstruct_mesh(PointToPlaneImplicit(cloud, ratio * spacing))
+        plane_mesh, plane_grid = reconstruct_mesh(SixthPowerPointToPlaneImplicit(cloud, ratio * spacing))
         plane_inside = plane_grid < 0
         iou = np.sum(plane_inside & winding_inside) / np.sum(plane_inside | winding_inside)
         distance = symmetric_mean_distance(plane_mesh, winding_mesh)
